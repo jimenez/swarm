@@ -14,7 +14,7 @@ import (
 const name = "mesos-swarm-task-name"
 
 func TestBuild(t *testing.T) {
-	task, err := newTask(cluster.BuildContainerConfig(dockerclient.ContainerConfig{
+	task, err := newTask(nil, cluster.BuildContainerConfig(dockerclient.ContainerConfig{
 		Image:     "test-image",
 		CpuShares: 42,
 		Memory:    2097152,
@@ -42,7 +42,7 @@ func TestBuild(t *testing.T) {
 }
 
 func TestNewTask(t *testing.T) {
-	task, err := newTask(cluster.BuildContainerConfig(dockerclient.ContainerConfig{}), name)
+	task, err := newTask(nil, cluster.BuildContainerConfig(dockerclient.ContainerConfig{}), name)
 	assert.NoError(t, err)
 
 	assert.Equal(t, *task.Name, name)
@@ -51,7 +51,7 @@ func TestNewTask(t *testing.T) {
 }
 
 func TestSendGetStatus(t *testing.T) {
-	task, err := newTask(cluster.BuildContainerConfig(dockerclient.ContainerConfig{}), "")
+	task, err := newTask(nil, cluster.BuildContainerConfig(dockerclient.ContainerConfig{}), "")
 	assert.NoError(t, err)
 
 	status := mesosutil.NewTaskStatus(nil, mesosproto.TaskState_TASK_RUNNING)

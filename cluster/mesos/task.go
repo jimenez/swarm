@@ -1,6 +1,7 @@
 package mesos
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/docker/docker/pkg/stringid"
@@ -13,11 +14,21 @@ import (
 type task struct {
 	mesosproto.TaskInfo
 
+	cluster *Cluster
+
 	updates chan *mesosproto.TaskStatus
 
 	config    *cluster.ContainerConfig
 	error     chan error
 	container chan *cluster.Container
+}
+
+func (t *task) ID() string {
+	return t.TaskId.GetValue()
+}
+
+func (t *task) Do() bool {
+	return t.cluster.scheduleTask(t)
 }
 
 func (t *task) build(slaveID string) {
@@ -53,13 +64,14 @@ func (t *task) build(slaveID string) {
 	t.SlaveId = &mesosproto.SlaveID{Value: &slaveID}
 }
 
-func newTask(config *cluster.ContainerConfig, name string) (*task, error) {
+func newTask(c *Cluster, config *cluster.ContainerConfig, name string) (*task, error) {
 	// save the name in labels as the mesos containerizer will override it
 	config.SetNamespacedLabel("mesos.name", name)
 
 	task := task{
 		updates: make(chan *mesosproto.TaskStatus),
 
+		cluster:   c,
 		config:    config,
 		error:     make(chan error),
 		container: make(chan *cluster.Container),
@@ -82,4 +94,26 @@ func (t *task) sendStatus(status *mesosproto.TaskStatus) {
 
 func (t *task) getStatus() *mesosproto.TaskStatus {
 	return <-t.updates
+}
+
+func (t *task) monitor() (bool, error) {
+	taskStatus := t.getStatus()
+
+	switch taskStatus.GetState() {
+	case mesosproto.TaskState_TASK_STAGING:
+	case mesosproto.TaskState_TASK_STARTING:
+	case mesosproto.TaskState_TASK_RUNNING:
+	case mesosproto.TaskState_TASK_FINISHED:
+		return true, nil
+	case mesosproto.TaskState_TASK_FAILED:
+		return true, errors.New(taskStatus.GetMessage())
+	case mesosproto.TaskState_TASK_KILLED:
+		return true, nil
+	case mesosproto.TaskState_TASK_LOST:
+		return true, errors.New(taskStatus.GetMessage())
+	case mesosproto.TaskState_TASK_ERROR:
+		return true, errors.New(taskStatus.GetMessage())
+	}
+
+	return false, nil
 }
