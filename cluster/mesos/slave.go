@@ -1,7 +1,6 @@
 package mesos
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/docker/swarm/cluster"
@@ -48,7 +47,6 @@ func (s *slave) removeOffer(offerID string) bool {
 func (s *slave) removeTask(taskID string) bool {
 	s.Lock()
 	defer s.Unlock()
-	fmt.Println("removing task")
 	found := false
 	_, found = s.tasks[taskID]
 	if found {
