@@ -26,6 +26,7 @@ func TestBuild(t *testing.T) {
 
 	assert.Equal(t, task.Container.GetType(), mesosproto.ContainerInfo_DOCKER)
 	assert.Equal(t, task.Container.Docker.GetImage(), "test-image")
+	assert.Equal(t, task.Container.Docker.GetNetwork(), mesosproto.ContainerInfo_DockerInfo_BRIDGE)
 
 	assert.Equal(t, len(task.Resources), 2)
 	assert.Equal(t, task.Resources[0], mesosutil.NewScalarResource("cpus", 42.0))

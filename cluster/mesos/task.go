@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/swarm/cluster"
 	"github.com/gogo/protobuf/proto"
@@ -39,6 +40,19 @@ func (t *task) build(slaveID string) {
 		Docker: &mesosproto.ContainerInfo_DockerInfo{
 			Image: &t.config.Image,
 		},
+	}
+
+	switch t.config.HostConfig.NetworkMode {
+	case "none":
+		t.Container.Docker.Network = mesosproto.ContainerInfo_DockerInfo_NONE.Enum()
+	case "host":
+		t.Container.Docker.Network = mesosproto.ContainerInfo_DockerInfo_HOST.Enum()
+	case "bridge", "":
+		// TODO handle -p and -P here
+		t.Container.Docker.Network = mesosproto.ContainerInfo_DockerInfo_BRIDGE.Enum()
+	default:
+		log.Errorf("Unsupported network mode %q", t.config.HostConfig.NetworkMode)
+		t.Container.Docker.Network = mesosproto.ContainerInfo_DockerInfo_BRIDGE.Enum()
 	}
 
 	if cpus := t.config.CpuShares; cpus > 0 {
