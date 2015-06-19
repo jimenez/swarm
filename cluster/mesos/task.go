@@ -178,11 +178,11 @@ func (t *task) monitor() (bool, []byte, error) {
 	taskStatus := t.getStatus()
 
 	switch taskStatus.GetState() {
-	case mesosproto.TaskState_TASK_STAGING:
-	case mesosproto.TaskState_TASK_STARTING:
 	case mesosproto.TaskState_TASK_RUNNING:
+		return false, taskStatus.Data, nil
+	case mesosproto.TaskState_TASK_KILLED:
 	case mesosproto.TaskState_TASK_FINISHED:
-		return true, taskStatus.Data, nil
+		return true, nil, nil
 	case mesosproto.TaskState_TASK_FAILED:
 		errorMessage := taskStatus.GetMessage()
 		if errorMessage == "Abnormal executor termination" {
@@ -192,10 +192,9 @@ func (t *task) monitor() (bool, []byte, error) {
 	case mesosproto.TaskState_TASK_KILLED:
 		return true, taskStatus.Data, nil
 	case mesosproto.TaskState_TASK_LOST:
-		return true, nil, errors.New(taskStatus.GetMessage())
 	case mesosproto.TaskState_TASK_ERROR:
 		return true, nil, errors.New(taskStatus.GetMessage())
 	}
 
-	return false, taskStatus.Data, nil
+	return false, nil, errors.New("Unexpected task status: " + taskStatus.GetMessage())
 }
