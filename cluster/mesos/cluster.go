@@ -428,7 +428,7 @@ func (c *Cluster) addOffer(offer *mesosproto.Offer) {
 	}(offer)
 }
 
-func (c *Cluster) removeOffer(offer *mesosproto.Offer) bool {
+func (c *Cluster) _removeOffer(offer *mesosproto.Offer) bool {
 	log.WithFields(log.Fields{"name": "mesos", "offerID": offer.Id.String()}).Debug("Removing offer")
 	s, ok := c.agents[offer.SlaveId.GetValue()]
 	if !ok {
@@ -440,6 +440,35 @@ func (c *Cluster) removeOffer(offer *mesosproto.Offer) bool {
 		delete(c.agents, offer.SlaveId.GetValue())
 	}
 	return found
+}
+
+func (c *Cluster) removeOffer(offer *mesosproto.Offer) bool {
+	c.Lock()
+	defer c.Unlock()
+
+	return c._removeOffer(offer)
+}
+
+func (c *Cluster) placeTask(task *task, nodes []*node.Node) *slave {
+	n, err := c.scheduler.SelectNodeForContainer(nodes, task.config)
+	if err != nil {
+		return nil
+	}
+	s, ok := c.slaves[n.ID]
+	if !ok {
+		task.error <- fmt.Errorf("Unable to create on slave %q", n.ID)
+		return nil
+	}
+
+	task.build(n.ID)
+	n.TotalCpus -= task.config.CpuShares
+	n.TotalMemory -= task.config.Memory
+	s.addTask(task)
+	return s
+}
+
+func (c *Cluster) Process(tasks []*task) []*task {
+	return c.scheduleTasks(tasks)
 }
 
 // scheduleTasks schedules and launches the tasks to mesos driver, and return the tasks
@@ -471,7 +500,7 @@ func (c *Cluster) scheduleTasks(tasks []*task) []*task {
 	for a := range usedAgents {
 		for _, offer := range c.agents[a.id].offers {
 			offerIDs = append(offerIDs, offer.Id)
-			c.removeOffer(offer)
+			c._removeOffer(offer)
 		}
 	}
 
