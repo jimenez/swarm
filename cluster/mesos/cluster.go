@@ -169,12 +169,12 @@ func (c *Cluster) CreateContainer(config *cluster.ContainerConfig, name string, 
 		return nil, errResourcesNeeded
 	}
 
-	task, err := newTask(c, config, name)
+	t, err := newTask(c, config, name)
 	if err != nil {
 		return nil, err
 	}
 
-	go c.pendingTasks.Add(task)
+	go c.pendingTasks.Add(t)
 
 	select {
 	case container := <-t.container:
@@ -336,7 +336,7 @@ func (c *Cluster) Volume(name string) *cluster.Volume {
 }
 
 // listNodes returns all the nodess in the cluster.
-func (c *Cluster) listNodes() []*node.Node {
+func (c *Cluster) _listNodes() []*node.Node {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -351,6 +351,14 @@ func (c *Cluster) listNodes() []*node.Node {
 		out = append(out, n)
 	}
 	return out
+}
+
+// listNodes returns all the nodess in the cluster.
+func (c *Cluster) listNodes() []*node.Node {
+	c.RLock()
+	defer c.RUnlock()
+
+	return c._listNodes()
 }
 
 func (c *Cluster) listOffers() []*mesosproto.Offer {
@@ -460,7 +468,7 @@ func (c *Cluster) placeTask(task *task, nodes []*node.Node) *slave {
 		return nil
 	}
 
-	task.build(n.ID)
+	task.build(n.ID, s.getOffers())
 	n.TotalCpus -= task.config.CpuShares
 	n.TotalMemory -= task.config.Memory
 	s.addTask(task)
@@ -485,11 +493,12 @@ func (c *Cluster) scheduleTasks(tasks []*task) []*task {
 			if !ok {
 				ts = []*task{t}
 				usedAgents[a] = ts
+				taskInfos[a] = []*mesosproto.TaskInfo{&t.TaskInfo}
 			} else {
-				ts = append(ts, t)
+				tasks = append(tasks, t)
+				taskInfos[s] = append(taskInfos[s], &t.TaskInfo)
 			}
 			scheduled = append(scheduled, t)
-			taskInfos = append(taskInfos, &t.TaskInfo)
 		}
 	}
 	c.scheduler.Lock()
@@ -498,22 +507,21 @@ func (c *Cluster) scheduleTasks(tasks []*task) []*task {
 
 	t.build(n.ID, c.agents[n.ID].offers)
 	for a := range usedAgents {
+		offerIDs := []*mesosproto.OfferID{}
 		for _, offer := range c.agents[a.id].offers {
 			offerIDs = append(offerIDs, offer.Id)
 			c._removeOffer(offer)
 		}
-	}
 
-	if _, err := c.driver.LaunchTasks(offerIDs, taskInfos, &mesosproto.Filters{}); err != nil {
-		for a, ts := range usedAgents {
-			for _, t := range ts {
+		if _, err := c.driver.LaunchTasks(offerIDs, taskInfos[a], &mesosproto.Filters{}); err != nil {
+			for _, t := range usedAgents[a] {
 				taskID := t.TaskInfo.TaskId.GetValue()
 				a.removeTask(taskID)
 				t.error <- err
 			}
+			delete(usedSlaves, s)
+			delete(taskInfos, s)
 		}
-		c.Unlock()
-		return scheduled
 	}
 
 	c.scheduler.Unlock()
