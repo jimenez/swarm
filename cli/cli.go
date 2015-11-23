@@ -19,6 +19,7 @@ func Run() {
 
 	app.Author = ""
 	app.Email = ""
+	app.HideVersion = true
 
 	app.Flags = []cli.Flag{
 		cli.BoolFlag{
