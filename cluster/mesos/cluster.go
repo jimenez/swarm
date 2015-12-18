@@ -14,7 +14,6 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/swarm/cluster"
-	"github.com/docker/swarm/cluster/mesos/queue"
 	"github.com/docker/swarm/scheduler"
 	"github.com/docker/swarm/scheduler/node"
 	"github.com/gogo/protobuf/proto"
@@ -75,7 +74,7 @@ func NewCluster(scheduler *scheduler.Scheduler, TLSConfig *tls.Config, master st
 		engineOpts:          engineOptions,
 	}
 
-	cluster.pendingTasks = NewQueue(cluster)
+	cluster.pendingTasks = queue.NewQueue()
 
 	// Empty string is accepted by the scheduler.
 	user, _ := options.String("mesos.user", "SWARM_MESOS_USER")
@@ -174,7 +173,11 @@ func (c *Cluster) CreateContainer(config *cluster.ContainerConfig, name string, 
 		return nil, err
 	}
 
-	go c.pendingTasks.Add(t)
+	go func(t *task) {
+		if len(c.scheduleTasks([]*task{t})) == 0 {
+			c.pendingTasks.Add(t)
+		}
+	}(t)
 
 	select {
 	case container := <-t.container:
@@ -457,22 +460,23 @@ func (c *Cluster) removeOffer(offer *mesosproto.Offer) bool {
 	return c._removeOffer(offer)
 }
 
-func (c *Cluster) placeTask(task *task, nodes []*node.Node) *slave {
-	n, err := c.scheduler.SelectNodeForContainer(nodes, task.config)
+func (c *Cluster) placeTask(task *task, nodes []*node.Node) *agent {
+	ns, err := c.scheduler.SelectNodesForContainer(nodes, task.config)
 	if err != nil {
 		return nil
 	}
-	s, ok := c.slaves[n.ID]
+	n := ns[0]
+	a, ok := c.agents[n.ID]
 	if !ok {
 		task.error <- fmt.Errorf("Unable to create on slave %q", n.ID)
 		return nil
 	}
 
-	task.build(n.ID, s.getOffers())
+	task.build(n.ID, a.getOffers())
 	n.TotalCpus -= task.config.CpuShares
 	n.TotalMemory -= task.config.Memory
-	s.addTask(task)
-	return s
+	a.addTask(task)
+	return a
 }
 
 func (c *Cluster) Process(tasks []*task) []*task {
@@ -485,7 +489,7 @@ func (c *Cluster) scheduleTasks(tasks []*task) []*task {
 	// Keep a map of agents to tasks scheduled
 	usedAgents := make(map[*agent][]*task)
 	scheduled := []*task{}
-	taskInfos := []*mesosproto.TaskInfo{}
+	taskInfos := make(map[*agent][]*mesosproto.TaskInfo)
 	nodes := c.listNodes()
 	for _, t := range tasks {
 		if a := c.placeTask(t, nodes); a != nil {
@@ -496,7 +500,7 @@ func (c *Cluster) scheduleTasks(tasks []*task) []*task {
 				taskInfos[a] = []*mesosproto.TaskInfo{&t.TaskInfo}
 			} else {
 				tasks = append(tasks, t)
-				taskInfos[s] = append(taskInfos[s], &t.TaskInfo)
+				taskInfos[a] = append(taskInfos[a], &t.TaskInfo)
 			}
 			scheduled = append(scheduled, t)
 		}
@@ -504,8 +508,6 @@ func (c *Cluster) scheduleTasks(tasks []*task) []*task {
 	c.scheduler.Lock()
 	//change to explicit lock defer c.scheduler.Unlock()
 	// TODO: Only use the offer we need from an agent
-
-	t.build(n.ID, c.agents[n.ID].offers)
 	for a := range usedAgents {
 		offerIDs := []*mesosproto.OfferID{}
 		for _, offer := range c.agents[a.id].offers {
@@ -519,8 +521,8 @@ func (c *Cluster) scheduleTasks(tasks []*task) []*task {
 				a.removeTask(taskID)
 				t.error <- err
 			}
-			delete(usedSlaves, s)
-			delete(taskInfos, s)
+			delete(usedAgents, a)
+			delete(taskInfos, a)
 		}
 	}
 
@@ -544,7 +546,7 @@ func (c *Cluster) scheduleTasks(tasks []*task) []*task {
 				// We can use this to find the right container.
 				inspect := []dockerclient.ContainerInfo{}
 				if data != nil && json.Unmarshal(data, &inspect) != nil && len(inspect) == 1 {
-					container := &cluster.Container{Container: dockerclient.Container{Id: inspect[0].Id}, Engine: s.engine}
+					container := &cluster.Container{Container: dockerclient.Container{Id: inspect[0].Id}, Engine: a.engine}
 					if container, err := container.Refresh(); err == nil {
 						if !t.done {
 							t.container <- container
@@ -567,32 +569,7 @@ func (c *Cluster) scheduleTasks(tasks []*task) []*task {
 		}
 	}
 
-	if !t.done {
-		t.error <- fmt.Errorf("Container failed to create")
-	}
 	return scheduled
-}
-
-func (c *Cluster) placeTask(task *task, nodes []*node.Node) *agent {
-	n, err := c.scheduler.SelectNodeForContainer(nodes, task.config)
-	if err != nil {
-		return nil
-	}
-	a, ok := c.agents[n.ID]
-	if !ok {
-		task.error <- fmt.Errorf("Unable to create on agent %q", n.ID)
-		return nil
-	}
-
-	task.build(n.ID)
-	n.TotalCpus -= task.config.CpuShares
-	n.TotalMemory -= task.config.Memory
-	a.addTask(task)
-	return a
-}
-
-func (c *Cluster) Process(tasks []*task) []*task {
-	return c.scheduleTasks(tasks)
 }
 
 // RANDOMENGINE returns a random engine.

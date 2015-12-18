@@ -31,10 +31,6 @@ func (t *task) ID() string {
 	return t.TaskId.GetValue()
 }
 
-func (t *task) Do() bool {
-	return t.cluster.scheduleTask(t)
-}
-
 func (t *task) Stop() {
 	t.done = true
 }
